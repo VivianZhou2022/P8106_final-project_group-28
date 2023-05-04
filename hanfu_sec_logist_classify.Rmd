@@ -1,0 +1,19 @@
+---
+title: "hanfu_sec_logis_classfiy"
+author: "hanfu shi"
+date: "2023-05-04"
+output: html_document
+---
+1. Impotant data
+```{r setup, include=FALSE}
+
+
+```
+
+
+
+```{r cars}
+
+```
+
+
