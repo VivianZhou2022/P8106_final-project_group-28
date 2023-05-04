@@ -4,16 +4,58 @@ author: "hanfu shi"
 date: "2023-05-04"
 output: html_document
 ---
-1. Impotant data
+```{r}
+
+library(summarytools)
+library(glmnet)
+library(caret)
+library(corrplot)
+
+library(ISLR)
+library(plotmo)
+
+library(caret)
+library(glmnet)
+library(mlbench)
+library(pROC)
+library(pdp)
+
+
+
+```
+1. Impotant data and treat recovery time as binary
 ```{r setup, include=FALSE}
 
-
+data = read.csv("hanfu_data.csv")
+data$binary_recovery <- ifelse(data$recovery_time > 30, 1, 0)
+table(data$binary_recovery)
 ```
-
-
-
+2. produce the training set
 ```{r cars}
-
+set.seed(2023)
+rowTrain <- createDataPartition(y = data$recovery_time,
+p = 0.8,
+list = FALSE)
+data$binary_recovery <- factor(data$binary_recovery)
+contrasts(data$binary_recovery)
+dat = data
 ```
 
+3.condcut regression
+```{r}
+glm.fit <- glm(binary_recovery ~ .,
+              data = dat,
+              subset = rowTrain,
+              family = binomial(link = "logit"))
+```
 
+```{r}
+test.pred.prob <- predict(glm.fit, newdata = data[-rowTrain,],
+type = "response")
+test.pred <- rep("neg", length(test.pred.prob))
+test.pred[test.pred.prob>0.5] <- "pos"
+confusionMatrix(data = as.factor(test.pred),
+reference = data$diabetes[-rowTrain],
+positive = "pos")
+
+```

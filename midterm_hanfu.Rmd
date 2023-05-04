@@ -1,0 +1,290 @@
+---
+title: "MIDTERM"
+author: "hanfu shi"
+date: "2023-03-22"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r}
+
+library(summarytools)
+library(glmnet)
+library(caret)
+library(corrplot)
+
+library(ISLR)
+library(plotmo)
+
+```
+
+```{r setup, include=FALSE}
+load("recovery.rdata")
+set.seed(3239) 
+dat <- dat[sample(1:10000, 2000),]
+set.seed(1)
+trainRows <- createDataPartition(y = dat$recovery_time, p = 0.8, list = FALSE)
+write.csv(dat, "hanfu_data.csv", row.names = FALSE)
+```
+
+Summary statistics of the predictors and the response
+```{r}
+st_options(plain.ascii = FALSE,
+style = "rmarkdown",
+dfSummary.silent = TRUE,
+footnote = NA,
+subtitle.emphasis = FALSE)
+dfSummary(dat[,-1])
+
+```
+
+Correlation plot
+```{r}
+dat2 <- model.matrix(recovery_time ~ ., dat)[ ,-1]
+x <- dat2[trainRows,]
+corrplot(cor(x), method = "circle", type = "full")
+```
+
+lasso model
+```{r}
+dat2 <- model.matrix(recovery_time ~ ., dat)[ ,-1]
+Hitters2 <- model.matrix(recovery_time ~ ., dat)[ ,-1]
+
+set.seed(1)
+
+trainRows <- createDataPartition(y = dat$recovery_time, p = 1, list = FALSE)
+
+# matrix of predictors (glmnet uses input matrix)
+x <- Hitters2[trainRows,]
+# vector of response
+y <- dat$recovery_time[trainRows]
+```
+
+```{r}
+ctrl1 <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+cv.lasso <- cv.glmnet(x, y, 
+                      alpha = 1, 
+                      lambda = exp(seq(5, -1, length = 100)))
+
+cv.lasso$lambda.min
+
+predict(cv.lasso, s = "lambda.1se", type = "coefficients")
+
+set.seed(2)
+lasso.fit <- train(x, y,
+                   method = "glmnet",
+                   tuneGrid = expand.grid(alpha = 1, 
+                                          lambda = exp(seq(5, -1, length=100))),
+                   trControl = ctrl1)
+plot(lasso.fit, xTrans = log)
+
+lasso.fit$bestTune
+
+coef(lasso.fit$finalModel, lasso.fit$bestTune$lambda)
+
+
+```
+
+
+fit model using least square
+```{r pressure, echo=FALSE}
+lm_fit <- lm(recovery_time ~ .,
+           data = dat)
+
+summary(lm_fit)
+coef(lm_fit)
+```
+
+# Best subset model selection
+```{r}
+library(leaps)
+regsubsetsObj <- regsubsets(recovery_time ~ ., data = dat, 
+                            method = "exhaustive", nbest = 1) 
+
+plot(regsubsetsObj, scale = "bic")
+# summary(regsubsetsObj)
+```
+
+## Elastic net
+```{r}
+
+set.seed(2)
+enet.fit <- train(x, y,
+                  method = "glmnet",
+                  tuneGrid = expand.grid(alpha = seq(0, 1, length = 21), 
+                                         lambda = exp(seq(2, -2, length = 50))),
+                  trControl = ctrl1)
+enet.fit$bestTune
+
+myCol<- rainbow(25)
+myPar <- list(superpose.symbol = list(col = myCol),
+                    superpose.line = list(col = myCol))
+
+plot(enet.fit, par.settings = myPar)
+
+coef(enet.fit$finalModel, enet.fit$bestTune$lambda)
+
+```
+
+PLS
+```{r}
+
+library(ISLR)
+library(pls)
+library(caret)
+
+```
+
+
+```{r}
+set.seed(2)
+pls.mod <- plsr(recovery_time~., 
+                data = dat[trainRows,], 
+                scale = TRUE,  
+                validation = "CV")
+
+summary(pls.mod)
+validationplot(pls.mod, val.type="MSEP", legendpos = "topright")
+
+cv.mse <- RMSEP(pls.mod)
+ncomp.cv <- which.min(cv.mse$val[1,,])-1
+ncomp.cv
+
+pls.fit <- train(x, y,
+                 method = "pls",
+                 tuneGrid = data.frame(ncomp = 1:19),
+                 trControl = ctrl1,
+                 preProcess = c("center", "scale"))
+
+```
+
+a. spline models df = 1
+```{r}
+library(splines)
+library(mgcv)
+library(pdp)
+library(earth)
+train_college = dat[trainRows,]
+fit.ss <- smooth.spline(train_college$weight, train_college$recovery_time)
+fit.ss$df
+
+range(train_college$weight)
+#set range of predictor
+pgg45.grid <- seq(from = -0, to = 68, by = 1)
+
+
+pred.ss <- predict(fit.ss,
+                   x = pgg45.grid)
+
+pred.ss.df <- data.frame(pred = pred.ss$y,
+                         pgg45 = pgg45.grid)
+#get p plot
+p <- ggplot(data = train_college, aes(x = weight, y = recovery_time)) +
+     geom_point(color = rgb(.2, .4, .2, .5))
+
+
+p +
+geom_line(aes(x = pgg45, y = pred), data = pred.ss.df,
+          color = rgb(.8, .1, .1, 1)) + theme_bw()
+
+```
+Estimated DF:10.04162, here we use it to plot
+```{r}
+fit.ss <- smooth.spline(train_college$weight, train_college$recovery_time,  df = 10.04162)
+fit.ss$df
+
+range(train_college$weight)
+#set range of predictor
+pgg45.grid <- seq(from = -0, to = 68, by = 1)
+
+
+pred.ss <- predict(fit.ss,
+                   x = pgg45.grid)
+
+pred.ss.df <- data.frame(pred = pred.ss$y,
+                         pgg45 = pgg45.grid)
+#get p plot
+p <- ggplot(data = train_college, aes(x = weight, y = recovery_time)) +
+     geom_point(color = rgb(.2, .4, .2, .5))
+
+p +
+geom_line(aes(x = pgg45, y = pred), data = pred.ss.df,
+          color = rgb(.8, .1, .1, 1)) + theme_bw()
+
+
+```
+b. GAM model
+```{r}
+x <- model.matrix(recovery_time~.,train_college)[,-1]
+# vector of response
+y <- train_college$recovery_time
+ctrl1 <- trainControl(method = "cv", number = 10)
+# you can try other options
+set.seed(2)
+gam.fit <- train(x, y,
+method = "gam",
+# tuneGrid = data.frame(method = "GCV.Cp", select = c(TRUE,FALSE)),
+trControl = ctrl1)
+gam.fit$bestTune
+
+plot(gam.fit)
+train_rows = trainRows
+#test error
+#x2 <- model.matrix(recovery_time~.,dat[-train_rows,])
+#y2 <- dat[-train_rows,]$recovery_time
+#predy2.lasso2 <- predict(gam.fit, newdata = dat[-train_rows,])
+#mean((y2 - predy2.lasso2)^2)
+
+gam.fit$finalModel
+```
+
+ MARS
+```{r}
+mars_grid <- expand.grid(degree = 1:3, 
+                         nprune = 2:20)
+
+set.seed(2)
+
+# matrix of predictors 
+x <- model.matrix(recovery_time~.,train_college)[,-1]
+# vector of response
+y <- train_college$recovery_time
+ctrl1 <- trainControl(method = "cv", number = 10)
+
+mars.fit <- train(x, y,
+                  method = "earth",
+                  tuneGrid = mars_grid,
+                  trControl = ctrl1)
+
+ggplot(mars.fit)
+#nprune not terms
+mars.fit$bestTune
+
+coef(mars.fit$finalModel) 
+
+#test error
+#x2 <- model.matrix(recovery_time~.,dat[-train_rows,])
+#y2 <- dat[-train_rows,]$recovery_time
+#predy2.mars <- predict(mars.fit, newdata = x2)
+#mean((y2 - predy2.mars)^2)
+```
+choose model
+```{r}
+
+
+resamp <- resamples(list(mars = mars.fit,  gam = gam.fit))
+summary(resamp)
+
+resamp2 <- resamples(list(enet = enet.fit, lasso = lasso.fit,  pls = pls.fit))
+
+summary(resamp2)
+```
+
+```{r}
+
+```
+
+
+```{r}
+
+```
