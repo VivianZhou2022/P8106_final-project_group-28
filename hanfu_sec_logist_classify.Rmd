@@ -38,24 +38,25 @@ p = 0.8,
 list = FALSE)
 data$binary_recovery <- factor(data$binary_recovery)
 contrasts(data$binary_recovery)
-dat = data
+dat = data[, -1]
 ```
 
 3.condcut regression
 ```{r}
 glm.fit <- glm(binary_recovery ~ .,
-              data = dat,
+              data = dat[rowTrain, ],
               subset = rowTrain,
               family = binomial(link = "logit"))
+summary(glm.fit)
 ```
 
 ```{r}
-test.pred.prob <- predict(glm.fit, newdata = data[-rowTrain,],
+test.pred.prob <- predict(glm.fit, newdata = dat[-rowTrain,],
 type = "response")
 test.pred <- rep("neg", length(test.pred.prob))
 test.pred[test.pred.prob>0.5] <- "pos"
 confusionMatrix(data = as.factor(test.pred),
-reference = data$diabetes[-rowTrain],
+reference = dat$binary_recovery[-rowTrain],
 positive = "pos")
 
 ```
