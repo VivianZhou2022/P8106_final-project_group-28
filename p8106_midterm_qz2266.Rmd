@@ -1,0 +1,362 @@
+---
+title: "p8106_midterm_qz2266"
+author: "Qing Zhou"
+date: "2023-04-02"
+output: pdf_document
+---
+
+
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+
+library(caret)
+library(MASS)
+library(pROC)
+library(klaR)
+library(glmnet)
+library(vip)
+library(tidyverse)
+library(knitr)
+library(visdat)
+library(corrplot)
+library(pls)
+
+
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+## Introduction
+
+Severe acute respiratory syndrome coronavirus 2 (SARS-CoV-2) infection and the resulting coronavirus disease (COVID-19) has become one of the largest public health concerns over the past 3 years, since it was announced as a pandemic by the World Health Organization in March, 2020. Globally, as of April 5, 2023, there have been 762,201,169 confirmed cases of COVID-19, including 6,889,743 deaths, reported to WHO.  Moreover, COVID-19 exerted a profound impact on the environment, economy, and human psychology in addition to its direct impact on health, leading to a series of societal changes unprecedented for almost everyone. Therefore, with the aim to get a better understanding of the factors that predict recovery time from COVID-19 illness,  a study was designed to combine three existing cohort studies that have been tracking participants for several years. The study collects recovery information through questionnaires and medical records, and leverages existing data on personal characteristics prior to the pandemic. The ultimate goal is to develop a prediction model for recovery time and identify important risk factors for long recovery time. 
+
+
+## Data Preparation
+
+### a).Data cleaning
+
+The data contains 2000 observations and 16 attributes extracted from the original dataset of 1000 observations. These variables includes of patients laboratory  results(LDL, SBP, etc.), and demographic values (age, gender and race),as well as Covid-19 related patients properties(severity, vaccine status, etc.). After standardized the variable names, we converted vector() to factor. BMI is defined as the body weight divided by the square of the body height. Thus, to avoid potential multicollieanity, we remove height and weight while keeping bmi variable. We also removed the variable ID and study, since they are not directly related to the outcome and make little contribution to the prediction. Moreover, we found there was no missing value in this dataset. 
+
+
+```{r }
+load("data/recovery.RData")
+
+# draw a random sample of 2000 participants
+set.seed(2266) 
+dat <- dat[sample(1:10000, 2000),] %>% 
+  janitor::clean_names() %>% 
+# generate dummy variables  
+  mutate(
+    gender = as.factor(gender),
+    race = as.factor(race),
+    smoking = as.factor(smoking),
+    hypertension = as.factor(hypertension),
+    diabetes = as.factor(diabetes),
+    vaccine = as.factor(vaccine),
+    severity = as.factor(severity)) %>%
+# exclude redundant or irrelevant variables
+   select(-height, -weight, -study, -id)
+# no missing data found
+vis_miss(dat)
+```
+
+### b). Data preprocessing
+
+```{r preprocess}
+summary(dat$recovery_time)
+
+par(mfrow = c(1, 2))
+boxplot(dat$recovery_time, main = "COVID-19 Recovery Time")
+hist(dat$recovery_time, main = "Distribution of Rescovery Time", col = "lightblue",
+xlab = "Recovery Time", prob = TRUE, ylim = c(0,0.03))
+lines(density(dat$recovery_time))
+abline(v = mean(dat$recovery_time), lty = "dashed", col = "red")
+```
+
+We first examine whether the outcome variable recovery_time follows the normal distribution. 
+
+- The average COVID-19 recovery time is 43.37 days, while the median recovery time is 39 days.
+
+- From the boxplot and histogram plot above, we found the outcome is right-skewed. So we perform log-transformation to this variable. After the transformation, the log_recovery_time is normally distributed.
+
+```{r log}
+dat$log_recovery_time <- log(dat$recovery_time)
+
+par(mfrow = c(1, 2))
+boxplot(dat$log_recovery_time, main = "COVID-19 Recovery Time")
+hist(dat$log_recovery_time, main = "Distribution of Rescovery Time", col = "lightblue",
+xlab = "Log Recovery Time", prob = TRUE, ylim = c(0,1))
+lines(density(dat$log_recovery_time))
+abline(v = mean(dat$log_recovery_time), lty = "dashed", col = "red")
+
+dat = dat %>% select(-recovery_time)
+```
+
+### c). Data partition
+
+Next, we split the dataset into two parts: training data (70%) and test data (30%).
+
+```{r split}
+set.seed(2266)
+trainRows <- createDataPartition(y = dat$log_recovery_time, p = 0.7, list = FALSE)
+
+# Training data
+dat_train = dat[trainRows, ]
+x_train = model.matrix(log_recovery_time~.,dat)[trainRows, -1]
+y_train = dat$log_recovery_time[trainRows]
+# Test data
+dat_test = dat[-trainRows, ]
+x_test = model.matrix(log_recovery_time~.,dat)[-trainRows, -1]
+y_test = dat$log_recovery_time[-trainRows]
+```
+
+
+
+## Exploratory Data Analysis
+
+We performed exploratory data analysis on training data. The EDA results could guide us for model building.
+
+```{r}
+# numeric summary
+summary(dat_train)
+```
+
+- From the correlation plot we found most predictors have relatively low correlation between each other. We also noticed high correlation occurred among several covariates and these high correlation might cause multicollinearity problem. For example, hypertension is positively correlated with sbp. Hypertension was defined as an average systolic blood pressure (SBP) >140 mm-Hg or an average diastolic blood pressure (DBP) >90 mmHg. It is possible for people who have low SBP but still are diagnosed as hypertension, due to high DBP. Therefore, we decided to keep both variables. Sbp is also moderately high correlated with age. So later we would explore if regularization methods could fix this issue. The final dataset includes the transformed outcome and 11 predictors.
+
+- Next, we create a feature plot to visualize each of the 11 predictors in the dataset in order to examine the association between each predictor the outcome recovery_time.
+
+```{r}
+# Convert non-numeric columns to numeric
+dat_train1 <- dat_train
+non_numeric_cols <- sapply(dat_train1, function(x) !is.numeric(x))
+
+dat_train1[, non_numeric_cols] <- lapply(dat_train1[, non_numeric_cols], as.numeric)
+```
+
+```{r}
+# set various graphical parameters (color, line type, background, etc) to control the look of trellis displays
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col <- rgb(.2, .4, .2, .5)
+theme1$plot.symbol$pch <- 16
+theme1$plot.line$col <- rgb(.8, .1, .1, 1)
+theme1$plot.line$lwd <- 2
+theme1$strip.background$col <- rgb(.0, .2, .6, .2)
+trellis.par.set(theme1)
+
+featurePlot(x = dat_train1[ ,1:11],
+            y = dat_train1[ ,12],
+            plot = "scatter",
+            span = .5,
+            labels = c("Predictors", "Log Recovery Time"),
+            type = c("p", "smooth"))
+```
+
+Visualization of the outcome in the training set.
+```{r outcome}
+par(mfrow = c(1, 2))
+boxplot(dat_train$log_recovery_time, main = "COVID-19 Log Recovery Time")
+
+hist(dat_train$log_recovery_time, main = "Distribution of Log Rescovery Time", col = "lightblue",
+xlab = "Log Recovery Time", prob = TRUE, ylim = c(0,1.1))
+lines(density(dat_train$log_recovery_time))
+abline(v = mean(dat_train$log_recovery_time), lty = "dashed", col = "red")
+```
+
+- The log-transformed outcome recovery_time in the training set is normally distributed. So next we could fit the models based on the EDA results. 
+
+
+## Model fit
+
+### 1. Linear model: 
+
+```{r lm}
+set.seed(2266)
+
+# 10-fold cross-validation repeated 5 times using the best rule
+ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+
+lm.fit <- train(log_recovery_time ~ .,
+                data = dat_train,
+                method = "lm",
+                trControl = ctrl)
+# model summary
+summary(lm.fit)
+
+# view performance based on the test set (RMSE)
+lm.pred = predict(lm.fit, newdata = dat_test)
+lm_rmse = sqrt(mean((lm.pred - dat_test$log_recovery_time)^2)); lm_rmse
+```
+
+
+### 2. Lasso model:
+
+```{r lasso based on lamda min}
+set.seed(2266)
+
+lasso.fit <- train(x_train, y_train,
+                   method = "glmnet",
+                   tuneGrid = expand.grid(alpha = 1,
+                                          lambda = exp(seq(-5, 1, length = 100))),
+                   trControl = ctrl)
+summary(lasso.fit)
+plot(lasso.fit, xTrans = log)
+
+# view performance based on the test set (RMSE)
+lasso.pred = predict(lasso.fit, newdata = x_test)
+lasso_rmse = sqrt(mean((lasso.pred - dat_test$log_recovery_time)^2)); lasso_rmse 
+
+# optimal tuning parameters
+lasso.fit$bestTune
+# show coefficients
+coef(lasso.fit$finalModel, lasso.fit$bestTune$lambda)
+```
+
+
+### 3. Elastic net model:
+
+```{r}
+set.seed(2266)
+
+elnet.fit <- train(x_train, y_train,
+                  method = "glmnet",
+                  tuneGrid = expand.grid(alpha = seq(0, 1, length = 21), 
+                                         lambda = exp(seq(-5, 1, length = 50))),
+                  trControl = ctrl)
+
+# view the model summary
+summary(elnet.fit)
+
+# visualization
+myCol <- rainbow(25)
+myPar <- list(superpose.symbol = list(col = myCol),
+superpose.line = list(col = myCol))
+plot(elnet.fit, par.settings = myPar)
+
+ # view performance based on the test set (RMSE)
+elnet.pred = predict(elnet.fit, newdata = x_test)
+elnet_rmse = sqrt(mean((elnet.pred - dat_test$log_recovery_time)^2)); elnet_rmse 
+
+# tuning parameter 
+elnet.fit$bestTune
+# show coefficients
+coef(elnet.fit$finalModel, elnet.fit$bestTune$lambda)
+```
+
+
+### 4. Partial least squares model:
+
+```{r}
+set.seed(2266)
+
+ctrl1 <- trainControl(method = "repeatedcv",
+number = 10,
+repeats = 5,
+selectionFunction = "best") # "oneSE" for the 1SE rule
+
+pls.fit <- train(x_train, y_train,
+                 method = "pls",
+                 tuneGrid = data.frame(ncomp = 1:15), 
+                 trControl = ctrl1,
+                 preProcess = c("center", "scale"))
+
+# model summary
+summary(pls.fit)
+ggplot(pls.fit, highlight = TRUE) +  
+scale_x_continuous(breaks = seq(0,20,by = 1))
+
+# view performance based on the test set (RMSE)
+pls.pred = predict(pls.fit, newdata = x_test)
+pls_rmse = sqrt(mean((pls.pred - dat_test$log_recovery_time)^2)); pls_rmse 
+
+```
+
+
+### 5. Generalized additive model (GAM):
+
+```{r}
+set.seed(2266)
+
+# fit GAM using all predictors
+gam_fit_all <- train(x_train, y_train,
+                 method = "gam",
+                 trControl = ctrl) 
+gam_fit_all$bestTune
+gam_fit_all$finalModel
+
+# fit GAM using selection specification
+gam_fit_select <- train(x_train, y_train, 
+                 method = "gam",
+                 tuneGrid = data.frame(method = "GCV.Cp", select = c(TRUE)),
+                 trControl = ctrl)  
+gam_fit_select$bestTune       
+gam_fit_select$finalModel
+
+summary(gam_fit_all)
+summary(gam_fit_select)
+
+# view performance on the test set (RMSE) for the model with all predictors
+gam_all_pred <- predict(gam_fit_all, newdata = x_test)
+gam_all_rmse <- sqrt(mean((gam_all_pred - dat_test$log_recovery_time)^2))
+gam_all_rmse
+
+
+# view performance on the test set (RMSE) for the model with select predictors
+gam_select_pred <- predict(gam_fit_select, newdata = x_test)
+gam_select_rmse <- sqrt(mean((gam_select_pred - dat_test$log_recovery_time)^2))
+gam_select_rmse
+```
+
+
+### 5. MARS model:
+
+```{r}
+set.seed(2266)
+mars_grid <- expand.grid(degree = 1:3, 
+                         nprune = 2:17)
+
+mars.fit <- train(x_train, y_train,
+                 method = "earth",
+                 tuneGrid = mars_grid,
+                 trControl = ctrl)
+ggplot(mars.fit)
+mars.fit$bestTune
+summary(mars.fit)
+
+# view performance based on the test set (RMSE)
+mars.pred = predict(mars.fit, newdata = x_test)
+mars_rmse = sqrt(mean((mars.pred - dat_test$log_recovery_time)^2)); mars_rmse 
+
+```
+
+## Model comparison:
+
+```{r}
+set.seed(2266)
+
+resamp <- resamples(list(
+  lm = lm.fit,
+  lasso = lasso.fit,
+  elnet = elnet.fit,
+  pls = pls.fit,
+  gam = gam_fit_all,
+  mars = mars.fit
+  ))
+
+summary(resamp)
+
+bwplot(resamp, metric = "RMSE")
+```
+
+Report the final model and interpret it. See the final report. 
+
+
+### Conclusion
+
+See the final report.
