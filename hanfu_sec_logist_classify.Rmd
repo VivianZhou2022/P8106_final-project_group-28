@@ -19,9 +19,16 @@ library(glmnet)
 library(mlbench)
 library(pROC)
 library(pdp)
+library(rpart)
+library(rpart.plot)
+library(gbm)
+library(tree)
+library(caret)
+library(party)
+library(ranger)
+library(randomForest)
 
-
-
+library(e1071)
 ```
 1. Impotant data and treat recovery time as binary
 ```{r setup, include=FALSE}
@@ -49,14 +56,80 @@ glm.fit <- glm(binary_recovery ~ .,
               family = binomial(link = "logit"))
 summary(glm.fit)
 ```
-
+4. roc curve
 ```{r}
 test.pred.prob <- predict(glm.fit, newdata = dat[-rowTrain,],
 type = "response")
-test.pred <- rep("neg", length(test.pred.prob))
-test.pred[test.pred.prob>0.5] <- "pos"
+test.pred <- rep("0", length(test.pred.prob))
+test.pred[test.pred.prob>0.5] <- "1"
 confusionMatrix(data = as.factor(test.pred),
 reference = dat$binary_recovery[-rowTrain],
-positive = "pos")
+positive = "1")
+
+roc.glm <- roc(dat$binary_recovery[-rowTrain], test.pred.prob)
+plot(roc.glm, legacy.axes = TRUE, print.auc = TRUE)
+#plot(smooth(roc.glm), col = 4, add = TRUE)
+
 
 ```
+
+
+5. classification tree
+rpart
+```{r}
+tree1 <- rpart(formula = binary_recovery ~ . ,
+data = dat,
+subset = rowTrain,
+control = rpart.control(cp = 0))
+cpTable <- printcp(tree1)
+plotcp(tree1)
+minErr <- which.min(cpTable[,4])
+tree2 <- prune(tree1, cp = cpTable[minErr,1])
+rpart.plot(tree2)
+
+
+```
+6. random forest
+
+```{r}
+set.seed(1)
+bagging <- randomForest(binary_recovery ~ . ,
+dat[rowTrain,],
+mtry = 8)
+set.seed(1)
+rf <- randomForest(binary_recovery ~ . ,
+                    dat[rowTrain,],
+                    mtry = 3)
+                    set.seed(1)
+                    rf2 <- ranger(binary_recovery ~ . ,
+                    dat[rowTrain,],
+                    mtry = 3,
+                    probability = TRUE)
+
+rf.pred <- predict(rf, dat[-rowTrain,])
+confusionMatrix(data=rf.pred, reference=dat[-rowTrain,]$binary_recovery, positive="1")
+```
+
+7. SVM
+```{r}
+set.seed(1)
+linear.tune <- tune.svm(binary_recovery ~ . ,
+                data = dat[rowTrain,],
+                kernel = "linear",
+                cost = exp(seq(-5,2,len=50)),
+                scale = TRUE)
+plot(linear.tune)
+linear.tune$best.parameters
+best.linear <- linear.tune$best.model
+summary(best.linear)
+
+pred.linear <- predict(best.linear, newdata = dat[-rowTrain,])
+confusionMatrix(data = pred.linear,
+reference = dat$binary_recovery[-rowTrain])
+
+
+
+
+```
+
+
