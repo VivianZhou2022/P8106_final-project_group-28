@@ -1,0 +1,376 @@
+---
+title: "Midterm Project"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-04-04"
+---
+
+```{r}
+library(ggplot2)
+library(glmnet)
+library(MASS)
+library(tidyverse)
+library(cowplot)
+library(corrgram)
+library(dplyr)
+library(caret)
+library(reshape2)
+library(plyr)
+library(corrplot)
+library(rpart)
+library(rpart.plot)
+```
+
+Load Data
+```{r}
+load("/Users/yichenlyu/Downloads/recovery.RData")
+
+#Draw a random sample of 2000 participants
+set.seed(5220)
+dat_new <- dat[sample(1:10000, 2000),]
+dat_new_01 <- na.omit(dat_new)
+
+#Create a new data frame without id variable
+dat_new_01_noID <- dat_new_01[ , !names(dat_new_01) %in% c("id")]
+attach(dat_new_01_noID)
+```
+
+
+Exploratory Analysis & Data Visualization
+```{r}
+#Relocate columns putting non-discrete predictors together
+dat_new_02 =
+  dat_new_01_noID %>% 
+  relocate(age,bmi,height,weight,SBP,LDL,recovery_time)
+dat_new_02
+
+#Produce some numerical summaries of the non-discrete predictors
+summary(dat_new_02[,1:7]) %>% knitr::kable()
+
+#Visualize response variable
+hist(dat_new_01_noID$recovery_time)
+qqnorm(dat_new_01_noID$recovery_time)
+qqline(dat_new_01_noID$recovery_time)
+
+#Create scatterplot to visualize non-discrete predictors vs. response variable
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col <- rgb(.2, .4, .2, .5)
+theme1$plot.symbol$pch <- 16
+theme1$plot.line$col <- rgb(.8, .1, .1, 1)
+theme1$plot.line$lwd <- 2
+theme1$strip.background$col <- rgb(.0, .2, .6, .2)
+trellis.par.set(theme1)
+
+featurePlot(x = dat_new_02[ ,1:6],
+            y = dat_new_02[ ,7],
+            plot = "scatter",
+            span = .5,
+            labels = c("Predictors","Recovery Time"),
+            type = c("p", "smooth"),
+            layout = c(3, 2))
+
+
+
+#Create a dataframe for gender and the corresponding mean recovery time
+dat_gender_male = dat_new_01_noID %>% filter(dat_new_01_noID[,2] %in% "1")
+dat_gender_female = dat_new_01_noID %>% filter(dat_new_01_noID[,2] %in% "0")
+geneder_male_mean = mean(dat_gender_male$recovery_time, na.rm = TRUE)
+geneder_female_mean = mean(dat_gender_female$recovery_time, na.rm = TRUE)
+data_new_gender_mean = data.frame(gender_type=c("male","female"),gender_mean=c(geneder_male_mean,geneder_female_mean))
+#Plot gender vs. mean recovery time
+p1 <- ggplot(data_new_gender_mean,aes(gender_type,gender_mean)) + 
+  geom_bar(stat = "identity", fill = "blue") + scale_x_discrete("gender") +
+  scale_y_continuous("recovery_time_mean",breaks = seq(0,45,15))
+
+#Create a dataframe for severity and the corresponding mean recovery time
+dat_not_severe = dat_new_01_noID %>% filter(dat_new_01_noID[,13] %in% "0")
+dat_severe = dat_new_01_noID %>% filter(dat_new_01_noID[,13] %in% "1")
+dat_not_severe_mean = mean(dat_not_severe$recovery_time, na.rm = TRUE)
+dat_severe_mean = mean(dat_severe$recovery_time, na.rm = TRUE)
+data_severity_type_mean = data.frame(severity_type=c("not severe","severe"),severity_mean=c(dat_not_severe_mean,dat_severe_mean))
+#Plot severity vs. mean recovery time
+p2 <- ggplot(data_severity_type_mean,aes(severity_type,severity_mean)) + 
+  geom_bar(stat = "identity", fill = "blue") + scale_x_discrete("severity") +
+  scale_y_continuous("recovery_time_mean",breaks = seq(0,45,15))
+
+#Create a dataframe for vaccinaiton and the corresponding mean recovery time
+dat_not_vaccinated = dat_new_01_noID %>% filter(dat_new_01_noID[,12] %in% "0")
+dat_vaccinated = dat_new_01_noID %>% filter(dat_new_01_noID[,12] %in% "1")
+dat_not_vaccinated_mean = mean(dat_not_vaccinated$recovery_time, na.rm = TRUE)
+dat_vaccinated_mean = mean(dat_vaccinated$recovery_time, na.rm = TRUE)
+data_vaccination_type_mean = data.frame(vaccination_type=c("not vaccinated","vaccinated"),vaccination_mean=c(dat_not_vaccinated_mean,dat_vaccinated_mean))
+#Plot vaccinaiton vs. mean recovery time
+p3 <- ggplot(data_vaccination_type_mean,aes(vaccination_type,vaccination_mean)) + 
+  geom_bar(stat = "identity", fill = "blue") + scale_x_discrete("vaccination") +
+  scale_y_continuous("recovery_time_mean",breaks = seq(0,45,15))
+
+#Create a dataframe for diabetes and the corresponding mean recovery time
+dat_no_diabetes = dat_new_01_noID %>% filter(dat_new_01_noID[,9] %in% "0")
+dat_diabetes = dat_new_01_noID %>% filter(dat_new_01_noID[,9] %in% "1")
+dat_no_diabetes_mean = mean(dat_no_diabetes$recovery_time, na.rm = TRUE)
+dat_diabetes_mean = mean(dat_diabetes$recovery_time, na.rm = TRUE)
+data_diabetes_mean = data.frame(diabetes_type=c("no diabetes","diabetes"),diabetes_mean=c(dat_no_diabetes_mean,dat_diabetes_mean))
+#Plot diabetes vs. mean recovery time
+p4 <- ggplot(data_diabetes_mean,aes(diabetes_type,diabetes_mean)) + 
+  geom_bar(stat = "identity", fill = "blue") + scale_x_discrete("diabetes") +
+  scale_y_continuous("recovery_time_mean",breaks = seq(0,45,15))
+
+#Create a dataframe for hypertension and the corresponding mean recovery time
+dat_no_hypertension = dat_new_01_noID %>% filter(dat_new_01_noID[,8] %in% "0")
+dat_hypertension = dat_new_01_noID %>% filter(dat_new_01_noID[,8] %in% "1")
+dat_no_hypertension_mean = mean(dat_no_hypertension$recovery_time, na.rm = TRUE)
+dat_hypertension_mean = mean(dat_hypertension$recovery_time, na.rm = TRUE)
+data_hypertension_mean = data.frame(hypertension_type=c("no hypertension","hypertension"),hypertension_mean=c(dat_no_hypertension_mean,dat_hypertension_mean))
+#Plot vaccinaiton vs. mean recovery time
+p5 <- ggplot(data_hypertension_mean,aes(hypertension_type,hypertension_mean)) + 
+  geom_bar(stat = "identity", fill = "blue") + scale_x_discrete("hypertension") +
+  scale_y_continuous("recovery_time_mean",breaks = seq(0,45,15))
+
+#Create a dataframe for smoking status and the corresponding mean recovery time
+dat_never_smoked = dat_new_01_noID %>% filter(dat_new_01_noID[,4] %in% "0")
+dat_former_smoker= dat_new_01_noID %>% filter(dat_new_01_noID[,4] %in% "1")
+dat_current_smoker= dat_new_01_noID %>% filter(dat_new_01_noID[,4] %in% "2")
+dat_never_smoked_mean = mean(dat_never_smoked$recovery_time, na.rm = TRUE)
+dat_former_smoker_mean = mean(dat_former_smoker$recovery_time, na.rm = TRUE)
+dat_current_smoker_mean = mean(dat_current_smoker$recovery_time, na.rm = TRUE)
+data_smoking_stauts_mean = data.frame(smoking_status=c("no never smoked","former smoker", "current_smoker"), smoker_mean=c(dat_never_smoked_mean,dat_former_smoker_mean, dat_current_smoker_mean))
+#Plot smoking status vs. mean recovery time
+p6 <- ggplot(data_smoking_stauts_mean,aes(smoking_status,smoker_mean)) + 
+  geom_bar(stat = "identity", fill = "blue") + scale_x_discrete("smoking status") +
+  scale_y_continuous("recovery_time_mean",breaks = seq(0,45,15))
+
+#Create a dataframe for race and the corresponding mean recovery time
+dat_white = dat_new_01_noID %>% filter(dat_new_01_noID[,3] %in% "1")
+dat_asian= dat_new_01_noID %>% filter(dat_new_01_noID[,3] %in% "2")
+dat_black= dat_new_01_noID %>% filter(dat_new_01_noID[,3] %in% "3")
+dat_hispanic= dat_new_01_noID %>% filter(dat_new_01_noID[,3] %in% "4")
+dat_white_mean = mean(dat_white$recovery_time, na.rm = TRUE)
+dat_asian_mean = mean(dat_asian$recovery_time, na.rm = TRUE)
+dat_black_mean = mean(dat_black$recovery_time, na.rm = TRUE)
+dat_hispanic_mean = mean(dat_hispanic$recovery_time, na.rm = TRUE)
+data_race_mean = data.frame(race_type=c("White","Asian", "Black", "Hispanic"), race_mean=c(dat_white_mean, dat_asian_mean, dat_black_mean, dat_hispanic_mean))
+#Plot race vs. mean recovery time
+p7 <- ggplot(data_race_mean,aes(race_type,race_mean)) + 
+  geom_bar(stat = "identity", fill = "blue") + scale_x_discrete("race") +
+  scale_y_continuous("recovery_time_mean",breaks = seq(0,45,15))
+
+#Plot the above seven plots together
+plot_grid(p1,p2,p3,p4,p5,p6,p7, labels = LETTERS[1:7], ncol = 3)
+
+```
+
+
+
+Data partition
+```{r}
+set.seed(5220)
+rowTrain <- createDataPartition(y = dat_new_01_noID$recovery_time,p = 0.8,list = FALSE)
+trainData <- dat_new_01_noID[rowTrain, ]
+testData <- dat_new_01_noID[-rowTrain, ]
+
+# training data
+x <- model.matrix(recovery_time~.,dat_new_01_noID)[rowTrain,-1]
+y <- dat_new_01_noID$recovery_time[rowTrain]
+# test data
+x2 <- model.matrix(recovery_time~.,dat_new_01_noID)[-rowTrain,-1]
+y2 <- dat_new_01_noID$recovery_time[-rowTrain]
+```
+
+
+Model training
+
+Fit LASSO
+```{r}
+ctrl1 <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+
+set.seed(5220)
+lasso.fit <- train(x, y,
+                   method = "glmnet",
+                   tuneGrid = expand.grid(alpha = 1,
+                                          lambda = exp(seq(5, -1, length=100))),
+                   trControl = ctrl1)
+plot(lasso.fit, xTrans = log)
+
+lasso.fit$bestTune
+coef(lasso.fit$finalModel, lasso.fit$bestTune$lambda)
+```
+
+
+Fit Ridge
+```{r}
+set.seed(5220)
+ridge.fit <- train(x, y,
+                   method = "glmnet",
+                   tuneGrid = expand.grid(alpha = 0,
+                   lambda = exp(seq(10, -2, length=100))),
+                   trControl = ctrl1)
+plot(ridge.fit, xTrans = log)
+
+ridge.fit$bestTune
+coef(ridge.fit$finalModel, ridge.fit$bestTune$lambda)
+```
+
+
+Fit Elastic net
+```{r}
+set.seed(5220)
+enet.fit <- train(x, y,
+                  method = "glmnet",
+                  tuneGrid = expand.grid(alpha = seq(0, 1, length = 21),
+                  lambda = exp(seq(2, -2, length = 50))),
+                  trControl = ctrl1)
+enet.fit$bestTune
+
+coef(enet.fit$finalModel, enet.fit$bestTune$lambda)
+```
+
+
+Fit PCR
+```{r}
+ctrl2 <- trainControl(method = "repeatedcv",
+                      number = 10,
+                      repeats = 5,
+                      selectionFunction = "best")
+
+set.seed(5220)
+pcr.fit <- train(x, y,
+                 method = "pcr",
+                 tuneGrid = data.frame(ncomp = 1:19),
+                 trControl = ctrl2,
+                 preProcess = c("center", "scale"))
+
+ggplot(pcr.fit, highlight = TRUE) + theme_bw()
+summary(pcr.fit)
+```
+
+
+Fit PLS
+```{r}
+set.seed(5220)
+pls.fit <- train(x, y,
+                 method = "pls",
+                 tuneGrid = data.frame(ncomp = 1:19),
+                 trControl = ctrl2,
+                 preProcess = c("center", "scale"))
+
+ggplot(pls.fit, highlight = TRUE)
+
+summary(pls.fit)
+```
+
+
+Fit GAM
+```{r}
+#ctrl3 <- trainControl(method = "cv", number = 10)
+
+set.seed(5220)
+gam.fit <- train(x, y,
+                 method = "gam",
+                 trControl = ctrl1)
+gam.fit$bestTune
+
+gam.fit$finalModel
+
+coef(gam.fit$finalModel)
+
+
+mod_gam <- gam(recovery_time ~ gender + race + smoking + hypertension + 
+    diabetes + vaccine + severity + study + s(age) + 
+    s(SBP) + s(LDL) + s(bmi) + s(height) + s(weight),
+               data = dat_new_01_noID[rowTrain,], method = "REML")
+
+summary(mod_gam)
+
+
+par(mfrow = c(1,6)) 
+plot(gam.fit$finalModel)
+```
+
+
+Fit MARS
+```{r}
+mars_grid <- expand.grid(degree = 1:3,
+                         nprune = 2:15)
+set.seed(5220)
+mars.fit <- train(x, y,
+                  method = "earth",
+                  tuneGrid = mars_grid,
+                  trControl = ctrl1)
+ggplot(mars.fit)
+
+mars.fit$bestTune
+
+coef(mars.fit$finalModel)
+```
+
+
+
+Model Comparison
+```{r}
+set.seed(5220)
+resamp <- resamples(list(enet = enet.fit, lasso = lasso.fit, ridge = ridge.fit, pcr = pcr.fit, pls = pls.fit, gam=gam.fit, mars=mars.fit))
+summary(resamp)
+
+bwplot(resamp, metric = "RMSE")
+
+
+# LASSO test error
+lasso.pred <- predict(lasso.fit, newdata = x2)
+mean((lasso.pred - y2)^2)
+
+# Ridge test error
+ridge.pred <- predict(ridge.fit, newdata = x2)
+mean((ridge.pred - y2)^2)
+
+# Elastic net test error
+enet.pred <- predict(enet.fit, newdata = x2)
+mean((enet.pred - y2)^2)
+
+# PCR test error
+predy2.pcr2 <- predict(pcr.fit, newdata = x2)
+mean((y2 - predy2.pcr2)^2)
+
+# PLS test error
+predy2.pls2 <- predict(pls.fit, newdata = x2)
+mean((y2 - predy2.pls2)^2)
+
+# GAM test error
+predy2.gam2 <- predict(gam.fit, newdata = x2)
+mean((y2 - predy2.gam2)^2)
+
+# MARS test error
+predy2.mars2 <- predict(mars.fit, newdata = x2)
+mean((y2 - predy2.mars2)^2)
+
+
+# join test errors into a dataframe
+test_rmse = tibble(
+                   lasso = mean((lasso.pred - y2)^2),
+                   ridge = mean((ridge.pred - y2)^2),
+                   enet = mean((enet.pred - y2)^2),
+                   pcr = mean((y2 - predy2.pcr2)^2),
+                   pls = mean((y2 - predy2.pls2)^2),
+                   gam = mean((y2 - predy2.gam2)^2),
+                   mars = mean((y2 - predy2.mars2)^2)) %>% 
+            pivot_longer(
+    lasso:mars,
+    names_to = 'name',
+    values_to = 'value'
+  )
+test_rmse
+
+#Create plot for the test errors
+ggplot(test_rmse, aes(x = name, y = value)) + 
+  geom_boxplot() +
+  coord_flip() +
+  labs(
+    title = "Test Errors Across All Fitted Models",
+    y = "RMSE"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.title.y = element_blank()
+  )
+```
+
