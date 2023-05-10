@@ -114,6 +114,13 @@ model <- train(binary_recovery ~ .,
 
 
 print(model)
+
+rpart.fit <- train(recovery_time ~ . ,
+                   data = covid_train,
+                   method = "rpart", 
+                   tuneGrid = data.frame(cp = exp(seq(-6,-2, length = 50))),
+                   trControl = ctrl1)
+rpart.fit$bestTune
 ```
 Based on the output, the classification tree model was trained using cross-validation on a dataset with 2000 samples and 15 predictors. The model was evaluated using accuracy and kappa metrics and optimized using the largest accuracy value. The optimal model had a complexity parameter (cp) value of 0.5, which resulted in an accuracy of 0.997 and kappa of 0.994. This suggests that the model performs very well in predicting the binary_recovery outcome variable, and the chosen cp value effectively balances the bias-variance tradeoff in the model.
 
@@ -140,6 +147,18 @@ rf.pred <- predict(rf, dat[-rowTrain,])
 confusionMatrix(data=rf.pred, reference=dat[-rowTrain,]$binary_recovery, positive="1")
 
 #summary(dat)
+rf.grid <- expand.grid(mtry = 1:11,
+splitrule = "variance",
+ min.node.size = 1:6)
+set.seed(2266)
+ctrl1 <- trainControl(method = "cv")
+# train a random forest model on the training data
+rf.fit <- train(recovery_time ~ .,
+               data = dat,
+                method = "ranger",
+                tuneGrid = rf.grid,
+                trControl = ctrl1)
+ggplot(rf.fit, highlight = TRUE)
 ```
 The random forest model performed very well, with an accuracy of 97.99% and a kappa of 0.9514, indicating very good agreement between predicted and actual values. The confusion matrix shows that the model correctly classified 391 out of 399 observations. The sensitivity and specificity of the model were both very high (93.33% and 100% respectively), and the positive predictive value and negative predictive value were both very good (100% and 97.21% respectively). Overall, the model appears to be very accurate and reliable.
 
@@ -162,7 +181,46 @@ confusionMatrix(data = pred.linear,
 
 
 
-
 ```
 
 The SVM model achieved an accuracy of 0.9799, with a Kappa value of 0.9514. The model correctly classified 112 out of 120 non-recovery instances and 279 out of 279 recovery instances. The model performed better than the baseline No Information Rate of 0.6992, indicating that it was able to effectively separate the two classes.
+
+
+```{r}
+library(ggplot2)
+
+# Parameter Tuning Plot
+linear_tune <- tune.svm(binary_recovery ~ .,
+                        data = dat[rowTrain, ],
+                        kernel = "linear",
+                        cost = exp(seq(-5, 2, len = 50)),
+                        scale = TRUE)
+linear_tune$results$cost <- exp(seq(-5, 2, len = 50))
+linear_tune_df <- do.call(rbind, linear_tune$results)  # Convert list to data frame
+
+linear_tune_plot <- ggplot(linear_tune_df, aes(x = log(cost), y = Accuracy)) +
+  geom_line() +
+  labs(x = "log(Cost)", y = "Accuracy") +
+  ggtitle("Linear SVM Parameter Tuning") +
+  theme_minimal()
+
+print(linear_tune_plot)
+
+
+# Variable Importance Plot
+bagging <- randomForest(binary_recovery ~ .,
+                       data = dat[rowTrain, ],
+                       mtry = 8)
+
+bagging_importance <- importance(bagging)
+bagging_importance_plot <- ggplot(bagging_importance, aes(x = Importance, y = reorder(Variable, Importance))) +
+  geom_point(size = 3) +
+  labs(x = "Variable Importance", y = "Variable") +
+  ggtitle("Random Forest (Bagging) Variable Importance") +
+  theme_minimal()
+
+print(bagging_importance_plot)
+
+
+
+```
