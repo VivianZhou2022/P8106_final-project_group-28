@@ -1,6 +1,8 @@
 ---
 title: "final_recovery_time"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 date: "2023-05-10"
 ---
 
@@ -25,14 +27,12 @@ library(ranger)
 Data Cleaning
 ```{r}
 dat0 = read_csv(file = "final_used_data.csv")
-#Draw a random sample of 2000 participants
-set.seed(5220)
-dat_new <- dat0[sample(1:10000, 2000),]
-dat_new_01 <- na.omit(dat_new)
+dat1 <- na.omit(dat0)
 
 #Create a new data frame without id variable
-dat <- dat0[ , !names(dat0) %in% c("id")]
+dat <- dat1[ , !names(dat0) %in% c("id")]
 attach(dat)
+
 ```
 
 Data Preprocessing
@@ -45,6 +45,7 @@ hist(dat$recovery_time, main = "Distribution of Rescovery Time", col = "lightblu
 lines(density(dat$recovery_time))
 abline(v = mean(dat$recovery_time), lty = "dashed", col = "red")
 # The above plots show that the response variable is right-skewed, so log-transformation was performed. 
+
 
 dat$log_recovery_time <- log(dat$recovery_time)
 par(mfrow = c(1, 2))
@@ -80,7 +81,8 @@ summary(dat_train)
 #Relocate columns putting non-discrete predictors together
 dat1 =
   dat %>% 
-  select(age,bmi,sbp,ldl,log_recovery_time)
+  select(age,bmi,sbp,ldl,recovery_time)
+
 
 # Correlation Plot
 dat2 <- model.matrix(log_recovery_time ~ ., dat1)[ ,-1]
@@ -88,29 +90,11 @@ x <- dat2[trainRows,]
 corrplot(cor(x))
 
 
-
 # Convert non-numeric columns to numeric
 dat_train1 <- dat_train
 non_numeric_cols <- sapply(dat_train1, function(x) !is.numeric(x))
 dat_train1[, non_numeric_cols] <- lapply(dat_train1[, non_numeric_cols], as.numeric)
-view(dat_train1)
 
-
-# Scatter Plot
-theme1 <- trellis.par.get()
-theme1$plot.symbol$col <- rgb(.2, .4, .2, .5)
-theme1$plot.symbol$pch <- 16
-theme1$plot.line$col <- rgb(.8, .1, .1, 1)
-theme1$plot.line$lwd <- 2
-theme1$strip.background$col <- rgb(.0, .2, .6, .2)
-trellis.par.set(theme1)
-
-featurePlot(x = dat_train1[ ,1:11],
-            y = dat_train1[ ,13],
-            plot = "scatter",
-            span = .5,
-            labels = c("Predictors","Log Recovery Time"),
-            type = c("p", "smooth"))
 
 ```
 Fit LASSO
@@ -127,21 +111,7 @@ plot(lasso.fit, xTrans = log)
 
 lasso.fit$bestTune
 coef(lasso.fit$finalModel, lasso.fit$bestTune$lambda)
-```
 
-
-Fit Ridge
-```{r}
-set.seed(5220)
-ridge.fit <- train(x_train, y_train,
-                   method = "glmnet",
-                   tuneGrid = expand.grid(alpha = 0,
-                   lambda = exp(seq(10, -2, length=100))),
-                   trControl = ctrl1)
-plot(ridge.fit, xTrans = log)
-
-ridge.fit$bestTune
-coef(ridge.fit$finalModel, ridge.fit$bestTune$lambda)
 ```
 
 
@@ -156,6 +126,8 @@ enet.fit <- train(x_train, y_train,
 enet.fit$bestTune
 
 coef(enet.fit$finalModel, enet.fit$bestTune$lambda)
+
+plot(enet.fit)
 ```
 
 
@@ -218,6 +190,8 @@ summary(mod_gam)
 
 par(mfrow = c(1,6)) 
 plot(gam.fit$finalModel)
+
+
 ```
 
 
@@ -242,7 +216,7 @@ coef(mars.fit$finalModel)
 Model Comparison
 ```{r}
 set.seed(5220)
-resamp <- resamples(list(enet = enet.fit, lasso = lasso.fit, ridge = ridge.fit, pcr = pcr.fit, pls = pls.fit, gam=gam.fit))
+resamp <- resamples(list(enet = enet.fit, lasso = lasso.fit, pcr = pcr.fit, pls = pls.fit, gam=gam.fit))
 summary(resamp)
 
 bwplot(resamp, metric = "RMSE")
@@ -354,4 +328,13 @@ summary(bst.fit$finalModel, las = 2, cBars = 11, cex.names = 0.6)
 pred.bst <- predict(bst.fit, newdata = dat_test)
 RMSE(pred.bst, dat_test$recovery_time)
 
+```
+
+Model Comparison
+```{r}
+set.seed(5220)
+resamp <- resamples(list(enet = enet.fit, lasso = lasso.fit, pcr = pcr.fit, pls = pls.fit, gam=gam.fit, tree=rpart.fit, rf=rf.fit, boosting=bst.fit))
+summary(resamp)
+
+bwplot(resamp, metric = "RMSE")
 ```
