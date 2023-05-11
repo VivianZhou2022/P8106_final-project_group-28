@@ -112,15 +112,16 @@ model <- train(binary_recovery ~ .,
                method = "rpart", 
                trControl = ctrl)
 
-
+ggplot(model, highlight = TRUE) 
 print(model)
 
 rpart.fit <- train(recovery_time ~ . ,
-                   data = covid_train,
+                   data = dat,
                    method = "rpart", 
                    tuneGrid = data.frame(cp = exp(seq(-6,-2, length = 50))),
                    trControl = ctrl1)
 rpart.fit$bestTune
+rpart.plot(rpart.fit$finalModel)
 ```
 Based on the output, the classification tree model was trained using cross-validation on a dataset with 2000 samples and 15 predictors. The model was evaluated using accuracy and kappa metrics and optimized using the largest accuracy value. The optimal model had a complexity parameter (cp) value of 0.5, which resulted in an accuracy of 0.997 and kappa of 0.994. This suggests that the model performs very well in predicting the binary_recovery outcome variable, and the chosen cp value effectively balances the bias-variance tradeoff in the model.
 

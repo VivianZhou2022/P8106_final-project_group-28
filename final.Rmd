@@ -338,3 +338,228 @@ summary(resamp)
 
 bwplot(resamp, metric = "RMSE")
 ```
+
+secondar analysis
+
+
+```{r}
+
+library(summarytools)
+library(glmnet)
+library(caret)
+library(corrplot)
+
+library(ISLR)
+library(plotmo)
+
+library(caret)
+library(glmnet)
+library(mlbench)
+library(pROC)
+library(pdp)
+library(rpart)
+library(rpart.plot)
+library(gbm)
+library(tree)
+library(caret)
+library(party)
+library(ranger)
+library(randomForest)
+
+library(e1071)
+```
+1. Impotant data and treat recovery time as binary
+```{r setup, include=FALSE}
+
+data = read.csv("final_used_data.csv")
+#qing_zhou_data = read.csv("Qing Zhou_data_id.csv")
+#data <- subset(data, select = -c(height, weight, study))
+#names(data) <- tolower(names(data))
+#write.csv(unique_merged_data, "final_used_data.csv", row.names = FALSE)
+#merged_data <- rbind(data, qing_zhou_data)
+#unique_merged_data <- unique(merged_data)
+data$binary_recovery <- ifelse(data$recovery_time > 30, 1, 0)
+table(data$binary_recovery)
+```
+2. produce the training set
+```{r cars}
+set.seed(2023)
+rowTrain <- createDataPartition(y = data$recovery_time,
+p = 0.8,
+list = FALSE)
+data$binary_recovery <- factor(data$binary_recovery)
+contrasts(data$binary_recovery)
+dat = data[, -1]
+dat$binary_recovery <- factor(dat$binary_recovery)
+```
+
+3.condcut regression
+Therer are no significant p value, indicating the logistic regression is not a suitable model for the secondary analysis
+```{r}
+glm.fit <- glm(binary_recovery ~ .,
+              data = dat[rowTrain, ],
+              subset = rowTrain,
+              family = binomial(link = "logit"))
+summary(glm.fit)
+```
+4. roc curve
+```{r}
+test.pred.prob <- predict(glm.fit, newdata = dat[-rowTrain,],
+                type = "response")
+                test.pred <- rep("0", length(test.pred.prob))
+                test.pred[test.pred.prob>0.5] <- "1"
+                confusionMatrix(data = as.factor(test.pred),
+                reference = dat$binary_recovery[-rowTrain],
+                positive = "1")
+test.pred <- ifelse(test.pred.prob > 0.5, 1, 0)
+confusionMatrix(data = as.factor(test.pred),
+                reference = dat$binary_recovery[-rowTrain],
+                positive = "1")
+roc.glm <- roc(dat$binary_recovery[-rowTrain], test.pred.prob)
+plot(roc.glm, legacy.axes = TRUE, print.auc = TRUE)
+#plot(smooth(roc.glm), col = 4, add = TRUE)
+
+
+```
+
+
+5. classification tree
+rpart
+```{r}
+tree1 <- rpart(formula = binary_recovery ~ . ,
+data = dat,
+subset = rowTrain,
+control = rpart.control(cp = 0))
+cpTable <- printcp(tree1)
+plotcp(tree1)
+minErr <- which.min(cpTable[,4])
+tree2 <- prune(tree1, cp = cpTable[minErr,1])
+rpart.plot(tree2)
+summary(tree2)
+
+#cross validation
+folds <- createFolds(dat$binary_recovery, k = 10)
+ctrl <- trainControl(method = "cv", 
+                     index = folds,
+                     savePredictions = TRUE,
+                     classProbs = TRUE)
+
+levels(dat$binary_recovery) <- make.names(levels(dat$binary_recovery))
+model <- train(binary_recovery ~ ., 
+               data = dat, 
+               method = "rpart", 
+               trControl = ctrl)
+
+ggplot(model, highlight = TRUE) 
+print(model)
+
+rpart.fit <- train(recovery_time ~ . ,
+                   data = dat,
+                   method = "rpart", 
+                   tuneGrid = data.frame(cp = exp(seq(-6,-2, length = 50))),
+                   trControl = ctrl1)
+rpart.fit$bestTune
+rpart.plot(rpart.fit$finalModel)
+```
+Based on the output, the classification tree model was trained using cross-validation on a dataset with 2000 samples and 15 predictors. The model was evaluated using accuracy and kappa metrics and optimized using the largest accuracy value. The optimal model had a complexity parameter (cp) value of 0.5, which resulted in an accuracy of 0.997 and kappa of 0.994. This suggests that the model performs very well in predicting the binary_recovery outcome variable, and the chosen cp value effectively balances the bias-variance tradeoff in the model.
+
+
+6. random forest
+
+```{r}
+dat = data[, -1]
+set.seed(1)
+bagging <- randomForest(binary_recovery ~ . ,
+dat[rowTrain,],
+mtry = 8)
+set.seed(1)
+rf <- randomForest(binary_recovery ~ . ,
+                    dat[rowTrain,],
+                    mtry = 3)
+                    set.seed(1)
+                    rf2 <- ranger(binary_recovery ~ . ,
+                    dat[rowTrain,],
+                    mtry = 3,
+                    probability = TRUE)
+
+rf.pred <- predict(rf, dat[-rowTrain,])
+confusionMatrix(data=rf.pred, reference=dat[-rowTrain,]$binary_recovery, positive="1")
+
+#summary(dat)
+rf.grid <- expand.grid(mtry = 1:11,
+splitrule = "variance",
+ min.node.size = 1:6)
+set.seed(2266)
+ctrl1 <- trainControl(method = "cv")
+# train a random forest model on the training data
+rf.fit <- train(recovery_time ~ .,
+               data = dat,
+                method = "ranger",
+                tuneGrid = rf.grid,
+                trControl = ctrl1)
+ggplot(rf.fit, highlight = TRUE)
+```
+The random forest model performed very well, with an accuracy of 97.99% and a kappa of 0.9514, indicating very good agreement between predicted and actual values. The confusion matrix shows that the model correctly classified 391 out of 399 observations. The sensitivity and specificity of the model were both very high (93.33% and 100% respectively), and the positive predictive value and negative predictive value were both very good (100% and 97.21% respectively). Overall, the model appears to be very accurate and reliable.
+
+7. SVM
+```{r}
+set.seed(1)
+linear.tune <- tune.svm(binary_recovery ~ . ,
+                data = dat[rowTrain,],
+                kernel = "linear",
+                cost = exp(seq(-5,2,len=50)),
+                scale = TRUE)
+plot(linear.tune)
+linear.tune$best.parameters
+best.linear <- linear.tune$best.model
+summary(best.linear)
+
+pred.linear <- predict(best.linear, newdata = dat[-rowTrain,])
+confusionMatrix(data = pred.linear,
+                reference = dat$binary_recovery[-rowTrain])
+
+
+
+```
+
+The SVM model achieved an accuracy of 0.9799, with a Kappa value of 0.9514. The model correctly classified 112 out of 120 non-recovery instances and 279 out of 279 recovery instances. The model performed better than the baseline No Information Rate of 0.6992, indicating that it was able to effectively separate the two classes.
+
+
+```{r}
+library(ggplot2)
+
+# Parameter Tuning Plot
+linear_tune <- tune.svm(binary_recovery ~ .,
+                        data = dat[rowTrain, ],
+                        kernel = "linear",
+                        cost = exp(seq(-5, 2, len = 50)),
+                        scale = TRUE)
+linear_tune$results$cost <- exp(seq(-5, 2, len = 50))
+linear_tune_df <- do.call(rbind, linear_tune$results)  # Convert list to data frame
+
+linear_tune_plot <- ggplot(linear_tune_df, aes(x = log(cost), y = Accuracy)) +
+  geom_line() +
+  labs(x = "log(Cost)", y = "Accuracy") +
+  ggtitle("Linear SVM Parameter Tuning") +
+  theme_minimal()
+
+print(linear_tune_plot)
+
+
+# Variable Importance Plot
+bagging <- randomForest(binary_recovery ~ .,
+                       data = dat[rowTrain, ],
+                       mtry = 8)
+
+bagging_importance <- importance(bagging)
+bagging_importance_plot <- ggplot(bagging_importance, aes(x = Importance, y = reorder(Variable, Importance))) +
+  geom_point(size = 3) +
+  labs(x = "Variable Importance", y = "Variable") +
+  ggtitle("Random Forest (Bagging) Variable Importance") +
+  theme_minimal()
+
+print(bagging_importance_plot)
+
+
+
+```
