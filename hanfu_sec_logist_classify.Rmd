@@ -2,7 +2,9 @@
 title: "hanfu_sec_logis_classfiy"
 author: "hanfu shi"
 date: "2023-05-04"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 ```{r}
 
@@ -88,6 +90,7 @@ plot(roc.glm, legacy.axes = TRUE, print.auc = TRUE)
 5. classification tree
 rpart
 ```{r}
+ctrl1 <- trainControl(method = "cv")
 tree1 <- rpart(formula = binary_recovery ~ . ,
 data = dat,
 subset = rowTrain,
